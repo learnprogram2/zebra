@@ -1,0 +1,4 @@
+project: zebrad
+kind: Changed
+body: Reject cross-transaction transparent double spends before transaction verification, skipping the preflight for blocks without transparent spends.
+time: 2026-11-07T21:08:10.515730057+01:00

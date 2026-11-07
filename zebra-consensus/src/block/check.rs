@@ -1,6 +1,9 @@
 //! Consensus check functions
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use chrono::{DateTime, Utc};
 
@@ -12,6 +15,7 @@ use zebra_chain::{
         Network, NetworkUpgrade,
     },
     transaction::{self, Transaction},
+    transparent,
     work::{
         difficulty::{ExpandedDifficulty, ParameterDifficulty as _},
         equihash,
@@ -22,7 +26,9 @@ use crate::{block::ShieldedActionCounts, error::*};
 
 /// Checks if there is exactly one coinbase transaction in `Block`,
 /// and if that coinbase transaction is the first transaction in the block.
-/// Returns the coinbase transaction is successful.
+/// Also rejects transparent spends shared by distinct transactions, before transaction verification.
+/// Duplicate inputs within one transaction are left to the transaction verifier.
+/// Returns the coinbase transaction if successful.
 ///
 /// > A transaction that has a single transparent input with a null prevout field,
 /// > is called a coinbase transaction. Every block has a single coinbase
@@ -48,15 +54,43 @@ pub fn coinbase_is_first(block: &Block) -> Result<Arc<transaction::Transaction>,
     // > field, is called a coinbase transaction.
     //
     // <https://zips.z.cash/protocol/protocol.pdf#coinbasetransactions>
-    let mut rest = block.transactions.iter().skip(1);
+    let mut has_transparent_spends = false;
     if !first.is_coinbase() {
         Err(TransactionError::CoinbasePosition)?;
     }
     // > A transparent input in a non-coinbase transaction MUST NOT have a null prevout
     //
     // <https://zips.z.cash/protocol/protocol.pdf#txnconsensus>
-    if !rest.all(|tx| tx.is_valid_non_coinbase()) {
+    if !block.transactions.iter().skip(1).all(|tx| {
+        has_transparent_spends = has_transparent_spends || tx.has_transparent_inputs();
+        tx.is_valid_non_coinbase()
+    }) {
         Err(TransactionError::CoinbaseAfterFirst)?;
+    }
+
+    // Reuse the coinbase pass to bypass the duplicate scan for blocks without transparent spends.
+    if has_transparent_spends {
+        let mut spends = HashMap::new();
+        for (tx_index, tx) in block.transactions.iter().skip(1).enumerate() {
+            let Some(bundle) = tx.transparent_bundle() else {
+                continue;
+            };
+            for input in &bundle.vin {
+                let outpoint = input.prevout();
+                if spends
+                    .insert(outpoint, tx_index)
+                    .is_some_and(|previous_tx_index| previous_tx_index != tx_index)
+                {
+                    return Err(TransactionError::DuplicateTransparentSpend(
+                        transparent::OutPoint {
+                            hash: transaction::Hash(*outpoint.hash()),
+                            index: outpoint.n(),
+                        },
+                    )
+                    .into());
+                }
+            }
+        }
     }
 
     Ok(first.clone())
