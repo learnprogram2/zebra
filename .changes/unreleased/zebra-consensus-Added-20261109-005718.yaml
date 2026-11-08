@@ -1,0 +1,4 @@
+project: zebra-consensus
+kind: Added
+body: Block transaction verifiers can be cloned and are dispatched directly without an intermediate worker.
+time: 2026-11-09T00:57:18.802635913+01:00
