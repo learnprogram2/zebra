@@ -41,6 +41,26 @@ use crate::{
 
 const LAST_BLOCK_HEIGHT: u32 = 10;
 
+/// Dropping every state handle must release the database without shutting down the runtime.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropped_state_releases_persistent_database() {
+    let _init_guard = zebra_test::init();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let cache = tempfile::tempdir().expect("the temporary cache directory can be created");
+        let config = Config {
+            cache_dir: cache.path().to_path_buf(),
+            ..Config::default()
+        };
+        for _ in 0..8 {
+            let state = crate::init(config.clone(), &Network::Mainnet, Height::MAX, 0).await;
+            tokio::task::yield_now().await;
+            drop(state);
+        }
+    })
+    .await
+    .expect("state shutdown and reopening should finish within the timeout");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn state_propagates_incomplete_block_body_errors() {
     use crate::{BlockReadError, DiskWriteBatch, TransactionLocation, WriteDisk};

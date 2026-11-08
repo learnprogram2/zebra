@@ -1,0 +1,4 @@
+project: zebrad
+kind: Changed
+body: Dropping the state service releases the metrics exporter’s database handle so the same persistent state can be reopened without restarting the runtime (#12371).
+time: 2026-11-08T06:52:47.867591577+01:00

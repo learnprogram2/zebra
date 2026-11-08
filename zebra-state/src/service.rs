@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -190,6 +190,9 @@ pub(crate) struct StateService {
 
     // Metrics
     //
+    /// Taking this database during drop waits for any active metrics export and releases its handle.
+    metrics_db: Arc<Mutex<Option<ZebraDb>>>,
+
     /// A metric tracking the maximum height that's currently in `finalized_state_queued_blocks`
     ///
     /// Set to `f64::NAN` if `finalized_state_queued_blocks` is empty, because grafana shows NaNs
@@ -244,6 +247,10 @@ impl Drop for StateService {
     fn drop(&mut self) {
         // The state service owns the state, tasks, and channels,
         // so dropping it should shut down everything.
+        self.metrics_db
+            .lock()
+            .expect("the metrics exporter must not panic while holding the database")
+            .take();
 
         // Close the channels (non-blocking)
         // This makes the block write thread exit the next time it checks the channels.
@@ -470,6 +477,7 @@ impl StateService {
             pending_utxos,
             last_prune: Instant::now(),
             read_service: read_service.clone(),
+            metrics_db: Arc::new(Mutex::new(Some(read_service.db.clone()))),
             max_finalized_queue_height: f64::NAN,
         };
         timer.finish_desc("initializing state service");
@@ -512,12 +520,21 @@ impl StateService {
         timer.finish_desc("legacy chain check");
 
         // Spawn a background task to periodically export RocksDB metrics to Prometheus
-        let db_for_metrics = read_service.db.clone();
+        let db_for_metrics = Arc::downgrade(&state.metrics_db);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                db_for_metrics.export_metrics();
+                let Some(db_for_metrics) = db_for_metrics.upgrade() else {
+                    break;
+                };
+                let db = db_for_metrics
+                    .lock()
+                    .expect("the metrics exporter must not panic while holding the database");
+                let Some(db) = db.as_ref() else {
+                    break;
+                };
+                db.export_metrics();
             }
         });
 
