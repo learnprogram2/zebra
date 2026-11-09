@@ -1,0 +1,4 @@
+project: zebrad
+kind: Changed
+body: Block verification no longer crashes when completed transaction verification retains a block output reference.
+time: 2026-11-09T04:08:10.94918247+01:00

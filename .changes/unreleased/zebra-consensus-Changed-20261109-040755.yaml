@@ -1,0 +1,4 @@
+project: zebra-consensus
+kind: Changed
+body: Semantic block verification no longer panics when a transaction service retains its request after responding.
+time: 2026-11-09T04:07:55.922422162+01:00
